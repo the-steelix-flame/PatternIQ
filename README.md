@@ -6,7 +6,7 @@
 
 It allows users to backtest complex trading strategies using plain English, compete in a gamified learning community, and receive real-time market insights, transforming trading from a game of chance into a skill-based discipline.
 
-*(Suggestion: Add a screenshot of your beautiful, working dashboard here!)*
+![PatternIQ Dashboard](./assets/dashboard.png)
 
 ---
 
