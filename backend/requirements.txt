@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+yfinance
+firebase-admin
+lxml
+requests
+google-auth
+google-auth-oauthlib
+PyJWT
+cryptography
+python-multipart
+setuptools
+numpy==1.26.4
+pandas==2.2.2
+pandas-ta==0.3.14b
+google-generativeai

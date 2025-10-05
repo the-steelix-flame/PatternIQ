@@ -1,0 +1,24 @@
+# Python / Backend specific
+# Ignore the virtual environment folder
+/backend/venv/
+# Ignore Python cache files
+/backend/__pycache__/
+*.pyc
+
+# --- CRITICAL: Secrets and Environment Variables ---
+# --- This section PROTECTS your secret keys ---
+/backend/.env
+/backend/serviceAccountKey.json
+
+# Node / Frontend specific
+# Ignore the massive node_modules folder
+/frontend/node_modules/
+# Ignore the build output folder
+/frontend/dist/
+# Ignore Vite's temporary cache
+/frontend/.vite-temp/
+
+# Common OS and IDE files
+.DS_Store
+.idea/
+.vscode/
