@@ -1,29 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { 
-    Box, 
-    Typography, 
-    Button, 
-    CircularProgress, 
-    Paper, 
-    Tabs, 
-    Tab, 
-    RadioGroup, 
-    FormControlLabel, 
-    Radio, 
-    List, 
-    ListItem, 
-    ListItemAvatar, 
-    Avatar, 
-    ListItemText, 
-    Alert, 
-    Chip,
-    ListItemButton
+    Box, Typography, Button, CircularProgress, Paper, Tabs, Tab, 
+    RadioGroup, FormControlLabel, Radio, List, ListItem, ListItemAvatar, 
+    Avatar, ListItemText, Alert, Chip, ListItemButton, Divider,
+    Table, TableBody, TableCell, TableContainer, TableHead, TableRow
 } from '@mui/material';
-import { CheckCircle, Cancel } from '@mui/icons-material';
+import { CheckCircle, Cancel, EmojiEvents, History } from '@mui/icons-material';
 import ProfileModal from './ProfileModal';
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
 const getLevelAndTier = (score = 0) => {
     const level = Math.floor(score / 100) + 1;
@@ -40,41 +26,48 @@ const Arena = ({ user, userData }) => {
     const [answers, setAnswers] = useState({});
     const [quizResult, setQuizResult] = useState(null);
     const [leaderboard, setLeaderboard] = useState([]);
+    const [history, setHistory] = useState([]); // --- NEW: History State ---
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [selectedProfile, setSelectedProfile] = useState(null);
     
     const { level, tier } = getLevelAndTier(userData?.arenaScore);
     
-    // --- THE DEFINITIVE FIX: The "Smart Sentry" Logic ---
-    // 1. Get today's date in the same format as the backend (YYYY-MM-DD)
     const todayStr = new Date().toISOString().split('T')[0];
-    
-    // 2. The core anti-cheating check. This will be true if the user has already submitted today.
     const hasCompletedQuizToday = userData?.dailyQuizCompleted === todayStr;
 
     useEffect(() => {
         const fetchData = async () => {
-            if (!userData) { setLoading(true); return; }
+            // FIX: Only block if the core auth ID is missing. 
+            // We removed !userData so new users without a DB document don't get stuck!
+            if (!user?.sub) { 
+                setLoading(false); 
+                return; 
+            }
+            
             setLoading(true); setError('');
             try {
-                // 3. The API call now respects the completion status.
-                // If the quiz is done, it doesn't even bother fetching the questions.
+                // Fetch Quiz, Leaderboard, AND History simultaneously
                 const quizPromise = hasCompletedQuizToday 
                     ? Promise.resolve({ data: null }) 
                     : axios.get(`${API_URL}/api/arena/daily-quiz/${level}`);
                 
                 const boardPromise = axios.get(`${API_URL}/api/arena/leaderboard`);
+                const historyPromise = axios.get(`${API_URL}/api/arena/history/${user.sub}`); 
                 
-                const [quizRes, boardRes] = await Promise.all([quizPromise, boardPromise]);
+                const [quizRes, boardRes, historyRes] = await Promise.all([quizPromise, boardPromise, historyPromise]);
                 
                 if (quizRes.data) setQuiz(quizRes.data);
                 setLeaderboard(boardRes.data);
-            } catch (err) { setError("Could not load Arena data."); }
-            finally { setLoading(false); }
+                setHistory(historyRes.data);
+            } catch (err) { 
+                setError("Could not load Arena data. Is the backend running?"); 
+            } finally { 
+                setLoading(false); 
+            }
         };
         fetchData();
-    }, [level, userData]); // Re-run when user data changes
+    }, [level, userData, user?.sub]);
 
     const handleAnswerChange = (qIndex, aIndex) => {
         setAnswers(prev => ({ ...prev, [qIndex]: parseInt(aIndex) }));
@@ -85,8 +78,10 @@ const Arena = ({ user, userData }) => {
         try {
             const res = await axios.post(`${API_URL}/api/arena/submit-quiz`, { userId: user.sub, level, answers });
             setQuizResult(res.data);
-            // After successful submission, we no longer need to refetch. The component will
-            // re-render, see the quizResult, and then on next page load `hasCompletedQuizToday` will be true.
+            
+            // Refresh history immediately after playing so it shows up in the tab
+            const historyRes = await axios.get(`${API_URL}/api/arena/history/${user.sub}`);
+            setHistory(historyRes.data);
         } catch (err) { setError(err.response?.data?.detail || "Failed to submit quiz answers."); }
         finally { setLoading(false); }
     };
@@ -96,82 +91,127 @@ const Arena = ({ user, userData }) => {
         setSelectedProfile(res.data);
     };
 
-    if (loading) {
-        return <Box sx={{textAlign: 'center', p: 4}}><CircularProgress /><Typography sx={{mt: 2}}>Loading Arena...</Typography></Box>;
-    }
+    if (loading) return <Box sx={{textAlign: 'center', p: 4}}><CircularProgress /><Typography sx={{mt: 2}}>Loading Arena...</Typography></Box>;
 
     return (
-        <Box>
+        <Box maxWidth="900px" margin="0 auto">
             <ProfileModal open={!!selectedProfile} handleClose={() => setSelectedProfile(null)} user={selectedProfile} />
-            <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-                <Typography variant="h4" gutterBottom>The Arena</Typography>
-                <Chip label={`Your Level: ${level} (${tier})`} color="primary" />
+            
+            <Box display="flex" justifyContent="space-between" alignItems="flex-end" mb={3}>
+                <Box>
+                    <Typography variant="h3" fontWeight="bold">The Arena</Typography>
+                    <Typography variant="subtitle1" color="text.secondary">Compete, learn, and earn Reputation Points (RP).</Typography>
+                </Box>
+                <Chip icon={<EmojiEvents />} label={`Lvl ${level} ${tier} | ${userData?.arenaScore || 0} RP`} color="primary" size="large" sx={{ fontWeight: 'bold' }} />
             </Box>
-            <Paper>
-                <Tabs value={activeTab} onChange={(e, val) => setActiveTab(val)} centered>
-                    <Tab label="Daily Quiz" />
-                    <Tab label="Leaderboard" />
+
+            <Paper sx={{ borderRadius: 3, overflow: 'hidden' }}>
+                <Tabs value={activeTab} onChange={(e, val) => setActiveTab(val)} centered sx={{ bgcolor: 'background.default', borderBottom: 1, borderColor: 'divider' }}>
+                    <Tab label="Daily Quiz" sx={{ fontWeight: 'bold' }} />
+                    <Tab label="Leaderboard" sx={{ fontWeight: 'bold' }} />
+                    <Tab label="My History" iconPosition="start" icon={<History fontSize="small" />} sx={{ fontWeight: 'bold' }} />
                 </Tabs>
 
                 {activeTab === 0 && (
-                    <Box p={3}>
+                    <Box p={4}>
                         {error && <Alert severity="error" sx={{mb: 2}}>{error}</Alert>}
 
-                        {/* --- THE FIX: This is the new rendering logic --- */}
                         {hasCompletedQuizToday ? (
-                            // 1. If the user has completed the quiz, BLOCK access.
-                            <Alert severity="success">You have already completed today's quiz! Your score has been updated. Come back tomorrow for a new challenge.</Alert>
+                            <Alert severity="success" sx={{ borderRadius: 2 }}>You have already completed today's quiz! Your score has been updated. Come back tomorrow for a new challenge.</Alert>
                         ) : quizResult ? (
-                            // 2. If they just submitted, show the results.
                             <Box>
-                                <Typography variant="h4">Quiz Results</Typography>
-                                <Typography variant="h6" color="primary.main" gutterBottom>You Scored: {quizResult.score} RP</Typography>
+                                <Typography variant="h5" fontWeight="bold" gutterBottom>Quiz Results</Typography>
+                                <Typography variant="h6" color="primary.main" gutterBottom>You Earned: +{quizResult.score} RP</Typography>
+                                <Divider sx={{ my: 2 }} />
                                 {quiz.questions.map((q, qIndex) => {
-                                    const correctIdx = quizResult.correct_answers[qIndex];
+                                    const correctIdx = quizResult.correct_answers ? quizResult.correct_answers[qIndex] : quizResult.results[qIndex].correct_index;
                                     const userAnsIdx = answers[qIndex];
                                     return (
-                                        <Box key={qIndex} my={2} p={2} borderRadius={2} sx={{border: '1px solid', borderColor: 'divider'}}>
-                                            <Typography sx={{fontWeight: 'bold'}}>{qIndex + 1}. {q.question}</Typography>
+                                        <Box key={qIndex} my={3} p={3} borderRadius={2} sx={{ bgcolor: 'background.default' }}>
+                                            <Typography sx={{fontWeight: 'bold', mb: 2}}>{qIndex + 1}. {q.question}</Typography>
                                             {q.options.map((opt, oIndex) => {
                                                 const isCorrect = correctIdx === oIndex;
                                                 const isUserChoice = userAnsIdx === oIndex;
-                                                let color = 'inherit';
+                                                let color = 'text.secondary';
                                                 if (isCorrect) color = 'success.main';
                                                 else if (isUserChoice && !isCorrect) color = 'error.main';
-                                                return <Box key={oIndex} display="flex" alignItems="center" sx={{color, my: 0.5}}>{isCorrect ? <CheckCircle fontSize="small" sx={{mr: 1}}/> : isUserChoice ? <Cancel fontSize="small" sx={{mr: 1}}/> : <Box sx={{width: '28px'}} />}<Typography>{opt}</Typography></Box>;
+                                                
+                                                return (
+                                                    <Box key={oIndex} display="flex" alignItems="center" sx={{ color, my: 1, fontWeight: isCorrect || isUserChoice ? 'bold' : 'normal' }}>
+                                                        {isCorrect ? <CheckCircle fontSize="small" sx={{mr: 1.5}}/> : isUserChoice ? <Cancel fontSize="small" sx={{mr: 1.5}}/> : <Box sx={{width: '32px'}} />}
+                                                        <Typography>{opt}</Typography>
+                                                    </Box>
+                                                );
                                             })}
                                         </Box>
                                     );
                                 })}
                             </Box>
                         ) : quiz ? (
-                            // 3. If not completed and no result yet, show the quiz.
                             <>
-                                <Typography variant="h6">Your {tier} Quiz ({quiz.questions.length} Questions)</Typography>
+                                <Typography variant="h6" gutterBottom>Your {tier} Challenge</Typography>
+                                <Typography variant="body2" color="text.secondary" mb={3}>Answer these {quiz.questions.length} questions based on recent market events. You earn 10 RP per correct answer.</Typography>
                                 {quiz.questions.map((q, qIndex) => (
-                                    <Box key={qIndex} my={2}>
-                                        <Typography sx={{fontWeight: 'bold'}}>{qIndex + 1}. {q.question}</Typography>
+                                    <Box key={qIndex} my={3} p={3} borderRadius={2} sx={{ bgcolor: 'background.default' }}>
+                                        <Typography sx={{fontWeight: 'bold', mb: 2}}>{qIndex + 1}. {q.question}</Typography>
                                         <RadioGroup onChange={(e) => handleAnswerChange(qIndex, e.target.value)}>
                                             {q.options.map((opt, oIndex) => <FormControlLabel key={oIndex} value={oIndex} control={<Radio />} label={opt} />)}
                                         </RadioGroup>
                                     </Box>
                                 ))}
-                                <Button variant="contained" onClick={submitQuiz}>Submit Answers</Button>
+                                <Button variant="contained" size="large" fullWidth onClick={submitQuiz} sx={{ mt: 2, height: 48, fontWeight: 'bold' }}>Submit Answers</Button>
                             </>
-                        ) : <Alert severity="info">Today's quiz for your level is not available yet. Please check back in a moment.</Alert>}
+                        ) : <Alert severity="info">Today's quiz is generating. Please check back in a moment.</Alert>}
                     </Box>
                 )}
 
                 {activeTab === 1 && (
-                    <List>
+                    <List sx={{ p: 0 }}>
                         {leaderboard.map((player, index) => (
-                            <ListItemButton key={player.id} onClick={() => viewProfile(player.id)}>
+                            <ListItemButton key={player.id} onClick={() => viewProfile(player.id)} divider>
+                                <Typography variant="h6" sx={{ width: 40, color: index < 3 ? 'primary.main' : 'text.secondary', fontWeight: 'bold' }}>
+                                    #{index + 1}
+                                </Typography>
                                 <ListItemAvatar><Avatar src={player.picture} /></ListItemAvatar>
-                                <ListItemText primary={`${index + 1}. ${player.displayName}`} />
-                                <Typography sx={{fontWeight: 'bold'}}>{player.arenaScore} RP</Typography>
+                                <ListItemText primary={<Typography fontWeight="bold">{player.displayName}</Typography>} />
+                                <Typography sx={{fontWeight: 'bold', color: 'primary.main'}}>{player.arenaScore} RP</Typography>
                             </ListItemButton>
                         ))}
                     </List>
+                )}
+
+                {/* --- NEW: HISTORY TAB --- */}
+                {activeTab === 2 && (
+                    <Box p={3}>
+                        {history.length > 0 ? (
+                            <TableContainer>
+                                <Table>
+                                    <TableHead>
+                                        <TableRow>
+                                            <TableCell sx={{ fontWeight: 'bold' }}>Date Played</TableCell>
+                                            <TableCell align="center" sx={{ fontWeight: 'bold' }}>Difficulty Level</TableCell>
+                                            <TableCell align="right" sx={{ fontWeight: 'bold' }}>Score Earned</TableCell>
+                                        </TableRow>
+                                    </TableHead>
+                                    <TableBody>
+                                        {history.map((record) => (
+                                            <TableRow key={record.id} hover>
+                                                <TableCell>{record.date}</TableCell>
+                                                <TableCell align="center">
+                                                    <Chip size="small" label={`Level ${record.level}`} variant="outlined" />
+                                                </TableCell>
+                                                <TableCell align="right" sx={{ color: record.score > 50 ? 'success.main' : 'warning.main', fontWeight: 'bold' }}>
+                                                    +{record.score} RP
+                                                </TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </TableContainer>
+                        ) : (
+                            <Alert severity="info" sx={{ mt: 2 }}>You haven't completed any quizzes yet. Play your first daily quiz to start building your history!</Alert>
+                        )}
+                    </Box>
                 )}
             </Paper>
         </Box>

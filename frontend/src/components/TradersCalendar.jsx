@@ -4,7 +4,7 @@ import { Box, Typography, Button, CircularProgress, Paper, Chip, IconButton, use
 import { Public, Business, Gavel, Warning, EventNote, AddCircle, ChevronLeft, ChevronRight, Edit } from '@mui/icons-material';
 import AddEditEventModal from './AddEditEventModal'; // We will use the intelligent modal
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
 // --- (Styles are the same) ---
 const calendarGridStyle = { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '1px', backgroundColor: 'rgba(255, 255, 255, 0.1)', border: '1px solid rgba(255, 255, 255, 0.1)' };

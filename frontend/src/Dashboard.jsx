@@ -11,7 +11,7 @@ import RequestQuoteIcon from '@mui/icons-material/RequestQuote';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import InsightsIcon from '@mui/icons-material/Insights';
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
 // A small component for displaying stats in cards
 const StatCard = ({ title, value, icon, color }) => (
@@ -63,7 +63,7 @@ function Dashboard({ user }) {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             📈 PatternIQ
           </Typography>
-          <Typography sx={{mr: 2}}>{user.name}</Typography>
+          <Typography sx={{ mr: 2 }}>{user.name}</Typography>
           <Avatar alt={user.name} src={user.picture} />
         </Toolbar>
       </AppBar>
@@ -143,12 +143,12 @@ function Dashboard({ user }) {
                   <Typography variant="h6" gutterBottom>Equity Curve</Typography>
                   <ResponsiveContainer width="100%" height="90%">
                     <LineChart data={result.equity_curve} margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2}/>
+                      <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} />
                       <XAxis dataKey="date" />
                       <YAxis tickFormatter={(value) => `₹${value.toLocaleString()}`} domain={['auto', 'auto']} />
                       <Tooltip formatter={(value) => `₹${value.toLocaleString()}`} />
                       <Legend />
-                      <Line type="monotone" dataKey="equity" stroke="#8884d8" strokeWidth={2} dot={false}/>
+                      <Line type="monotone" dataKey="equity" stroke="#8884d8" strokeWidth={2} dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
                 </Paper>
@@ -156,8 +156,8 @@ function Dashboard({ user }) {
               {/* AND CHANGE "lg" to "md" HERE */}
               <Grid item xs={12} md={5}>
                 <Paper sx={{ p: 3, height: '500px', overflowY: 'auto', borderRadius: 3 }}>
-                  <Typography variant="h6" gutterBottom>🤖 AI Analysis</Typography>
-                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
+                  <Typography variant="h6" gutterBottom>🤖 AI's Analysis</Typography>
+                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
                     {result.ai_explanation}
                   </Typography>
                 </Paper>
