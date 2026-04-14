@@ -22,7 +22,15 @@ logger = logging.getLogger(__name__)
 
 # --- Firebase Initialization ---
 try:
-    cred = credentials.Certificate("serviceAccountKey.json")
+    firebase_secret = os.getenv("FIREBASE_SERVICE_ACCOUNT")
+    if firebase_secret:
+        # Parse the JSON string from Hugging Face Secrets
+        cred_dict = json.loads(firebase_secret)
+        cred = credentials.Certificate(cred_dict)
+    else:
+        # Fallback for local development
+        cred = credentials.Certificate("serviceAccountKey.json")
+        
     if not firebase_admin._apps:
         firebase_admin.initialize_app(cred)
     db = firestore.client()
@@ -36,7 +44,12 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 app = FastAPI(title="PatternIQ API")
-origins = ["http://localhost:5173", "http://localhost:3000"]
+origins = [
+    "http://localhost:5173", 
+    "http://localhost:3000",
+    "https://patterniq.vercel.app", # Replace with your actual Vercel URL
+    "https://*.vercel.app" # Optional: Allows preview deployments
+]
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 # --- Market Index Constituents (NSE Tickers) ---
