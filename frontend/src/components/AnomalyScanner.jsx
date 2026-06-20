@@ -6,7 +6,6 @@ import {
 } from '@mui/material';
 import { db } from '../firebase';
 import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
-import TypingEffect from './TypingEffect';
 import {
     ResponsiveContainer, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
     BarChart, Bar, PieChart, Pie, Cell, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
@@ -421,18 +420,18 @@ const AnomalyScanner = () => {
                 </Stack>
             </Box>
 
-            {/* ── Scan alert ─────────────────────────────────────────────────── */}
+            {/* ── Demo-data notice (shown when the scan returned nothing / the feed was down) ── */}
             {scanStatus === 'finished' && !chartData.scatter && (
                 <Box sx={{
                     mb: 4, p: 2,
-                    bgcolor: `${C.blue}0D`,
-                    border: `1px solid ${C.border}`,
+                    bgcolor: 'rgba(255,180,84,0.08)',
+                    border: '1px solid rgba(255,180,84,0.35)',
                     borderRadius: '12px',
                     display: 'flex', alignItems: 'center', gap: 1.5,
                 }}>
-                    <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: C.blue, flexShrink: 0 }} />
-                    <Typography variant="body2" sx={{ color: C.blue }}>
-                        <TypingEffect text={`Live ${selectedIndex.replace(/_/g, ' ')} scan completed. Awaiting live data feed — displaying historical pattern structure.`} />
+                    <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#FFB454', flexShrink: 0 }} />
+                    <Typography variant="body2" sx={{ color: '#FFB454' }}>
+                        <strong>Sample data</strong> — the live {selectedIndex.replace(/_/g, ' ')} scan returned no anomalies or the data feed was unavailable. The charts below are illustrative placeholders, <strong>not live market data</strong>.
                     </Typography>
                 </Box>
             )}

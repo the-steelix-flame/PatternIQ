@@ -3,10 +3,11 @@ import { Box, Typography, Container, Paper, TextField, Button, Divider, Alert, C
 import { GoogleLogin } from '@react-oauth/google';
 import { jwtDecode } from 'jwt-decode';
 import { auth } from '../firebase';
-import { 
-    createUserWithEmailAndPassword, 
-    signInWithEmailAndPassword, 
-    sendEmailVerification 
+import {
+    createUserWithEmailAndPassword,
+    signInWithEmailAndPassword,
+    sendEmailVerification,
+    sendPasswordResetEmail
 } from 'firebase/auth';
 
 const LoginPage = ({ onLogin }) => {
@@ -21,6 +22,36 @@ const LoginPage = ({ onLogin }) => {
     const handleGoogleSuccess = (credentialResponse) => {
         const decoded = jwtDecode(credentialResponse.credential);
         onLogin({ sub: decoded.sub, name: decoded.name, picture: decoded.picture });
+    };
+
+    const handleForgotPassword = async () => {
+        setError('');
+        setSuccessMsg('');
+        if (!email) {
+            setError("Enter your email address above, then click 'Forgot password?' to receive a reset link.");
+            return;
+        }
+        setLoading(true);
+        try {
+            await sendPasswordResetEmail(auth, email);
+            // Worded so we never reveal whether an account actually exists for this email.
+            setSuccessMsg(`If an account exists for ${email}, a password reset link has been sent. Check your inbox (and spam folder).`);
+        } catch (err) {
+            console.error("Password reset error:", err);
+            const code = err.code || '';
+            if (code === 'auth/invalid-email') {
+                setError("Please enter a valid email address.");
+            } else if (code === 'auth/user-not-found') {
+                // Don't disclose account existence — show the same neutral success message.
+                setSuccessMsg(`If an account exists for ${email}, a password reset link has been sent. Check your inbox (and spam folder).`);
+            } else if (code === 'auth/too-many-requests') {
+                setError("Too many attempts. Please wait a few minutes and try again.");
+            } else {
+                setError(err.message.replace("Firebase: ", ""));
+            }
+        } finally {
+            setLoading(false);
+        }
     };
 
     const handleManualAuth = async (e) => {
@@ -88,9 +119,17 @@ const LoginPage = ({ onLogin }) => {
                     <TextField margin="normal" required fullWidth label="Email Address" type="email" value={email} onChange={e => setEmail(e.target.value)} />
                     <TextField margin="normal" required fullWidth label="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} />
                     
-                    <Button type="submit" fullWidth variant="contained" sx={{ mt: 3, mb: 2, height: 45 }} disabled={loading}>
+                    <Button type="submit" fullWidth variant="contained" sx={{ mt: 3, mb: 1, height: 45 }} disabled={loading}>
                         {loading ? <CircularProgress size={24} /> : (isSignUp ? 'Sign Up & Send Code' : 'Sign In')}
                     </Button>
+
+                    {!isSignUp && (
+                        <Box sx={{ textAlign: 'right', mb: 1 }}>
+                            <Button type="button" onClick={handleForgotPassword} disabled={loading} sx={{ textTransform: 'none', fontSize: '0.85rem', p: 0.5 }}>
+                                Forgot password?
+                            </Button>
+                        </Box>
+                    )}
                 </Box>
 
                 <Button fullWidth onClick={() => { setIsSignUp(!isSignUp); setError(''); setSuccessMsg(''); }} sx={{ mb: 2, textTransform: 'none' }}>

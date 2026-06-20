@@ -1,10 +1,12 @@
 import os
 import math
+import hashlib
+from urllib.parse import quote
 import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 import requests
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -15,6 +17,8 @@ import json
 import logging
 import numpy as np
 from fastapi import Query
+from fastapi.concurrency import run_in_threadpool
+from strategy_sandbox import safe_execute_strategy
 
 # --- Setup Logging ---
 logging.basicConfig(level=logging.INFO)
@@ -43,14 +47,28 @@ load_dotenv()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+# --- Zerodha Kite Connect (optional broker integration; gated behind env credentials) ---
+# Set KITE_API_KEY / KITE_API_SECRET in the environment to enable "Connect Broker".
+# api_secret is used ONLY server-side to sign the checksum — it must never reach the client.
+KITE_API_KEY = os.getenv("KITE_API_KEY")
+KITE_API_SECRET = os.getenv("KITE_API_SECRET")
+KITE_BASE = "https://api.kite.trade"
+
 app = FastAPI(title="PatternIQ API")
 origins = [
-    "http://localhost:5173", 
+    "http://localhost:5173",
     "http://localhost:3000",
-    "https://patterniq.vercel.app", # Replace with your actual Vercel URL
-    "https://*.vercel.app" # Optional: Allows preview deployments
+    "https://pattern-iq-1o1d.vercel.app",  # Replace with your actual Vercel URL
 ]
-app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    # Starlette does exact-string matching (no glob), so wildcard subdomains need a regex.
+    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --- Market Index Constituents (NSE Tickers) ---
 MARKET_INDICES = {
@@ -323,36 +341,33 @@ async def perform_backtest(request: BacktestRequest):
                 coding_prompt = f"""
                 Write a single Python function named `find_signals` that takes a pandas DataFrame `data` as input.
                 Analyze the data for: "{params['entry_condition']}".
-                CRITICAL: Use ONLY these columns: {available_columns}. Use '{date_col}' for time.
+                CRITICAL: Use ONLY these columns: {available_columns}. Use '{date_col}' for time. All indicator columns already exist.
+                SANDBOX RULES (mandatory): do NOT use any import statements, and do NOT reference the pandas or numpy modules (no `pd.`/`np.`).
+                Use only the `data` DataFrame, its columns, and operators/methods like .shift(), .rolling(), .mean(), &, |, >, <.
                 Return a pandas Series of booleans (True = entry signal).
                 Provide ONLY the Python code.
                 """
                 code_response_text = call_openrouter(coding_prompt)
                 code_to_execute = code_response_text.strip().replace('```python', '').replace('```', '')
             else:
-                # Fallback for simple conditions
-                code_to_execute = f"""def find_signals(data):
-    if 'RSI_14' not in data.columns:
-        import pandas_ta as ta
-        data.ta.rsi(length=14, append=True)
-    return data['RSI_14'] < 30"""
+                # Fallback for simple conditions — attach the indicator OUTSIDE, then keep the
+                # strategy code pure (the sandbox forbids imports inside find_signals).
+                if 'RSI_14' not in data.columns:
+                    data.ta.rsi(length=14, append=True)
+                code_to_execute = "def find_signals(data):\n    return data['RSI_14'] < 30"
         else:
             # mode == 'python' (User provided their own script)
             code_to_execute = request.custom_script
 
-        # --- STAGE 3: Securely Execute the Strategy Script ---
-        local_scope = {}
+        # --- STAGE 3: Validate & Sandbox-Execute the Strategy Script ---
+        # safe_execute_strategy validates the AST and runs find_signals with no access
+        # to app globals, secrets, os, network or imports (see STRATEGY SANDBOX above).
         try:
-            # Execute the string as actual Python code
-            exec(code_to_execute, globals(), local_scope)
-            if 'find_signals' not in local_scope:
-                raise ValueError("Your script must define a function named 'find_signals(data)'.")
-            
-            find_signals_func = local_scope['find_signals']
-            entry_signals = find_signals_func(data)
+            # Run in a worker thread so the isolated-subprocess wait never blocks the event loop.
+            entry_signals = await run_in_threadpool(safe_execute_strategy, code_to_execute, data)
         except Exception as e:
             logger.error(f"Script Execution Error: {e}", exc_info=True)
-            raise HTTPException(status_code=400, detail=f"Python Script Error: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Strategy Script Error: {str(e)}")
 
         # --- STAGE 4: Execute Backtest Loop ---
         capital = request.capital
@@ -501,53 +516,275 @@ def scan_stocks_for_anomalies_task():
     logger.info("Background anomaly scan finished.")
 
 # --- PORTFOLIO & RISK ENDPOINTS ---
+# Holdings are real: users add them manually (stored per-user in Firestore) and/or
+# import them from a connected Zerodha Kite account (see the BROKER section below).
+# Prices, P&L, sector weights and the risk score are all computed live from yfinance.
 class PortfolioAnalysisRequest(BaseModel):
     portfolio_summary: str
 
-@app.get("/api/get-portfolio/{user_id}")
-async def get_portfolio(user_id: str):
-    # Simulated mock broker data (In a real app, this would hit the Zerodha/Upstox API)
-    holdings = [
-        {"symbol": "RELIANCE", "quantity": 50, "avg_price": 2800.00, "current_price": 2950.45, "sector": "Energy"},
-        {"symbol": "TCS", "quantity": 20, "avg_price": 3800.00, "current_price": 3920.10, "sector": "IT"},
-        {"symbol": "HDFCBANK", "quantity": 100, "avg_price": 1450.00, "current_price": 1420.50, "sector": "Financials"},
-        {"symbol": "TATAMOTORS", "quantity": 150, "avg_price": 950.00, "current_price": 1010.25, "sector": "Automobile"},
-        {"symbol": "LT", "quantity": 30, "avg_price": 3400.00, "current_price": 3650.00, "sector": "Infrastructure"},
-    ]
-    
-    total_invested = 0
-    total_current = 0
-    sector_allocation = {}
-    
-    # Calculate live P&L and Sector Weights
-    for h in holdings:
-        invested = h["quantity"] * h["avg_price"]
-        current = h["quantity"] * h["current_price"]
-        h["pnl"] = current - invested
-        h["pnl_percent"] = (h["pnl"] / invested) * 100
-        h["current_value"] = current
-        h["invested_value"] = invested
-        
+class HoldingInput(BaseModel):
+    userId: str
+    symbol: str
+    quantity: float
+    avg_price: float
+
+def _yf(sym: str) -> str:
+    return f"{sym.upper().strip()}.NS"
+
+def fetch_prices_and_vol(symbols: list[str]) -> dict:
+    """Return {symbol: {'price': last_close, 'vol': annualized_vol_pct}} from ~1mo of data."""
+    out = {}
+    if not symbols:
+        return out
+    tickers = [_yf(s) for s in symbols]
+    try:
+        data = yf.download(tickers, period="1mo", group_by='ticker', progress=False, auto_adjust=True)
+    except Exception as e:
+        logger.error(f"Portfolio price fetch failed: {e}")
+        return out
+    for s in symbols:
+        try:
+            # yfinance returns a column MultiIndex (keyed by ticker) even for a SINGLE
+            # ticker when group_by='ticker', so branch on the column shape, not the count.
+            df = data[_yf(s)] if isinstance(data.columns, pd.MultiIndex) else data
+            close = df['Close'].dropna()
+            if close.empty:
+                continue
+            price = clean_val(close.iloc[-1])
+            rets = close.pct_change().dropna()
+            vol = clean_val(rets.std() * (252 ** 0.5) * 100) if len(rets) > 1 else 0.0
+            out[s] = {"price": price, "vol": round(vol, 1)}
+        except Exception as e:
+            logger.warning(f"Price/vol fetch failed for {s}: {e}")
+            continue
+    return out
+
+def compute_risk(holdings: list, sector_alloc: dict, total_current: float) -> dict:
+    """Real risk read from sector concentration, single-position concentration and weighted volatility."""
+    if not holdings or total_current <= 0:
+        return {"level": "N/A", "score": 0, "detail": "No holdings to assess."}
+    max_sector_w = (max(sector_alloc.values()) / total_current * 100) if sector_alloc else 0.0
+    max_pos_w = max(h["current_value"] for h in holdings) / total_current * 100
+    wvol = sum(h["current_value"] * h.get("volatility", 0) for h in holdings) / total_current
+    score = min(100, 0.4 * max_sector_w + 0.3 * max_pos_w + 0.3 * min(wvol, 100))
+    level = "Low" if score < 35 else "Moderate" if score < 60 else "High"
+    return {
+        "level": level,
+        "score": round(score),
+        "detail": f"Top sector {max_sector_w:.0f}% · Weighted volatility {wvol:.0f}%",
+        "max_sector_weight": round(max_sector_w, 1),
+        "max_position_weight": round(max_pos_w, 1),
+        "weighted_volatility": round(wvol, 1),
+    }
+
+def get_broker_connection(user_id: str) -> dict:
+    """Whether this user has a live broker session stored in Firestore."""
+    if not db:
+        return {"connected": False, "broker": None}
+    try:
+        doc = db.collection('users').document(user_id).collection('broker').document('kite').get()
+        if doc.exists and doc.to_dict().get('access_token'):
+            return {"connected": True, "broker": "Zerodha Kite", "connected_at": doc.to_dict().get('connected_at')}
+    except Exception as e:
+        logger.warning(f"Broker status check failed for {user_id}: {e}")
+    return {"connected": False, "broker": None}
+
+def fetch_kite_holdings(user_id: str) -> list:
+    """Import holdings from a connected Zerodha Kite account. Returns [] if not connected/expired."""
+    if not (db and KITE_API_KEY):
+        return []
+    broker_ref = db.collection('users').document(user_id).collection('broker').document('kite')
+    try:
+        doc = broker_ref.get()
+        access_token = doc.to_dict().get('access_token') if doc.exists else None
+        if not access_token:
+            return []
+        resp = requests.get(
+            f"{KITE_BASE}/portfolio/holdings",
+            headers={"X-Kite-Version": "3", "Authorization": f"token {KITE_API_KEY}:{access_token}"},
+            timeout=15,
+        )
+        if resp.status_code == 403:
+            # Token expired (~6 AM IST daily) or invalidated — drop it so the user reconnects.
+            broker_ref.delete()
+            logger.info(f"Kite token expired for {user_id}; cleared.")
+            return []
+        resp.raise_for_status()
+        holdings = []
+        for r in resp.json().get("data", []):
+            qty = (r.get("quantity", 0) or 0) + (r.get("t1_quantity", 0) or 0)
+            if qty <= 0:
+                continue
+            holdings.append({
+                "symbol": str(r.get("tradingsymbol", "")).upper(),
+                "quantity": float(qty),
+                "avg_price": float(r.get("average_price", 0) or 0),
+                "source": "kite",
+            })
+        return holdings
+    except Exception as e:
+        logger.warning(f"Kite holdings fetch failed for {user_id}: {e}")
+        return []
+
+def build_portfolio(user_id: str) -> dict:
+    """Assemble a live portfolio from manual + broker holdings, priced via yfinance."""
+    manual = []
+    try:
+        for doc in db.collection('users').document(user_id).collection('holdings').stream():
+            d = doc.to_dict()
+            if d.get("symbol") and d.get("quantity") and d.get("avg_price"):
+                manual.append({"symbol": d["symbol"], "quantity": float(d["quantity"]),
+                               "avg_price": float(d["avg_price"]), "source": "manual"})
+    except Exception as e:
+        logger.error(f"Failed to read holdings for {user_id}: {e}")
+
+    broker = get_broker_connection(user_id)
+    broker_holdings = fetch_kite_holdings(user_id) if broker.get("connected") else []
+    all_holdings = manual + broker_holdings
+
+    if not all_holdings:
+        return {
+            "source": "empty", "broker": broker, "holdings": [], "sector_data": [],
+            "total_invested": 0, "total_current": 0, "total_pnl": 0, "total_pnl_percent": 0,
+            "risk": {"level": "N/A", "score": 0, "detail": "Add holdings or connect your broker to begin."},
+        }
+
+    prices = fetch_prices_and_vol(list({h["symbol"] for h in all_holdings}))
+    holdings, sector_alloc = [], {}
+    total_invested = total_current = 0.0
+    for h in all_holdings:
+        sym, qty, avg = h["symbol"], h["quantity"], h["avg_price"]
+        pinfo = prices.get(sym, {})
+        ltp = pinfo.get("price") or avg          # fall back to cost if price is unavailable
+        invested, current = qty * avg, qty * ltp
+        sector = SECTOR_MAP.get(sym, "Other")
+        holdings.append({
+            "symbol": sym, "quantity": qty, "avg_price": round(avg, 2),
+            "current_price": round(ltp, 2), "invested_value": round(invested, 2),
+            "current_value": round(current, 2), "pnl": round(current - invested, 2),
+            "pnl_percent": round(((current - invested) / invested * 100) if invested > 0 else 0, 2),
+            "sector": sector, "volatility": pinfo.get("vol", 0.0),
+            "source": h.get("source", "manual"), "price_live": sym in prices,
+        })
         total_invested += invested
         total_current += current
-        sector_allocation[h["sector"]] = sector_allocation.get(h["sector"], 0) + current
-        
+        sector_alloc[sector] = sector_alloc.get(sector, 0) + current
+
     total_pnl = total_current - total_invested
-    total_pnl_percent = (total_pnl / total_invested) * 100 if total_invested > 0 else 0
-    
-    # Format sector data for the PieChart
-    sector_data = [{"id": i, "value": round(v, 2), "label": k} for i, (k, v) in enumerate(sector_allocation.items())]
-    
+    sector_data = [{"id": i, "value": round(v, 2), "label": k} for i, (k, v) in enumerate(sector_alloc.items())]
     return {
-        "broker": "Zerodha (Mock)",
-        "status": "Connected",
+        "source": "broker" if broker_holdings else "manual",
+        "broker": broker,
         "total_invested": round(total_invested, 2),
         "total_current": round(total_current, 2),
         "total_pnl": round(total_pnl, 2),
-        "total_pnl_percent": round(total_pnl_percent, 2),
-        "holdings": holdings,
-        "sector_data": sector_data
+        "total_pnl_percent": round((total_pnl / total_invested * 100) if total_invested > 0 else 0, 2),
+        "holdings": sorted(holdings, key=lambda x: x["current_value"], reverse=True),
+        "sector_data": sector_data,
+        "risk": compute_risk(holdings, sector_alloc, total_current),
     }
+
+@app.get("/api/get-portfolio/{user_id}")
+async def get_portfolio(user_id: str):
+    if not db:
+        raise HTTPException(500, "Firestore not initialized.")
+    try:
+        return build_portfolio(user_id)
+    except Exception as e:
+        logger.error(f"Failed to build portfolio for {user_id}: {e}", exc_info=True)
+        raise HTTPException(500, "Failed to build portfolio.")
+
+@app.post("/api/portfolio/holdings")
+async def upsert_holding(h: HoldingInput):
+    if not db:
+        raise HTTPException(500, "Firestore not initialized.")
+    symbol = h.symbol.upper().strip().replace(".NS", "")
+    if not symbol or h.quantity <= 0 or h.avg_price <= 0:
+        raise HTTPException(400, "A symbol with a positive quantity and average price is required.")
+    db.collection('users').document(h.userId).collection('holdings').document(symbol).set({
+        "symbol": symbol, "quantity": h.quantity, "avg_price": h.avg_price,
+        "source": "manual", "updated": firestore.SERVER_TIMESTAMP,
+    })
+    return {"status": "success", "symbol": symbol}
+
+@app.delete("/api/portfolio/holdings/{user_id}/{symbol}")
+async def delete_holding(user_id: str, symbol: str):
+    if not db:
+        raise HTTPException(500, "Firestore not initialized.")
+    # Match the doc-id normalisation used by upsert_holding (which strips ".NS").
+    sym = symbol.upper().strip().replace(".NS", "")
+    db.collection('users').document(user_id).collection('holdings').document(sym).delete()
+    return {"status": "success"}
+
+
+# --- BROKER INTEGRATION (Zerodha Kite Connect) ---
+# Flow: frontend opens login_url → Zerodha redirects back with a one-time request_token →
+# frontend POSTs {userId, request_token} here → we exchange it server-side (signing with the
+# secret api_secret) for an access_token, store it, and import holdings. The api_secret never
+# leaves the server, and the request_token is the ONLY thing we trust from the redirect.
+class KiteConnectRequest(BaseModel):
+    userId: str
+    request_token: str
+
+@app.get("/api/broker/status/{user_id}")
+async def broker_status(user_id: str):
+    status = get_broker_connection(user_id)
+    status["configured"] = bool(KITE_API_KEY)
+    return status
+
+@app.get("/api/broker/kite/login-url")
+async def kite_login_url(user_id: str = Query(None)):
+    if not KITE_API_KEY:
+        return {"configured": False, "message": "Broker integration is not configured on this server."}
+    url = f"https://kite.zerodha.com/connect/login?v=3&api_key={KITE_API_KEY}"
+    if user_id:
+        url += f"&redirect_params={quote(f'uid={user_id}')}"
+    return {"configured": True, "login_url": url}
+
+@app.post("/api/broker/kite/connect")
+async def kite_connect(req: KiteConnectRequest):
+    if not db:
+        raise HTTPException(500, "Firestore not initialized.")
+    if not (KITE_API_KEY and KITE_API_SECRET):
+        raise HTTPException(400, "Broker integration is not configured on this server.")
+    try:
+        # checksum = SHA-256 HEX of (api_key + request_token + api_secret), in that exact order.
+        checksum = hashlib.sha256(
+            (KITE_API_KEY + req.request_token + KITE_API_SECRET).encode("utf-8")
+        ).hexdigest()
+        resp = requests.post(
+            f"{KITE_BASE}/session/token",
+            data={"api_key": KITE_API_KEY, "request_token": req.request_token, "checksum": checksum},
+            headers={"X-Kite-Version": "3"},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            logger.error(f"Kite session exchange failed: {resp.status_code} {resp.text[:300]}")
+            raise HTTPException(400, "Could not connect to Zerodha. The login may have expired — please try again.")
+        data = resp.json().get("data", {})
+        access_token = data.get("access_token")
+        if not access_token:
+            raise HTTPException(400, "Zerodha did not return an access token.")
+        db.collection('users').document(req.userId).collection('broker').document('kite').set({
+            "access_token": access_token,
+            "kite_user_id": data.get("user_id"),
+            "kite_user_name": data.get("user_name"),
+            "connected_at": firestore.SERVER_TIMESTAMP,
+        })
+        imported = fetch_kite_holdings(req.userId)
+        return {"status": "success", "broker": "Zerodha Kite", "holdings_imported": len(imported)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Kite connect failed: {e}", exc_info=True)
+        raise HTTPException(500, "Failed to connect your Zerodha account.")
+
+@app.post("/api/broker/kite/disconnect/{user_id}")
+async def kite_disconnect(user_id: str):
+    if not db:
+        raise HTTPException(500, "Firestore not initialized.")
+    db.collection('users').document(user_id).collection('broker').document('kite').delete()
+    return {"status": "disconnected"}
 
 @app.post("/api/portfolio/analyze")
 async def analyze_portfolio(req: PortfolioAnalysisRequest):
@@ -577,22 +814,70 @@ class DebriefSubmission(BaseModel):
     stance: str # 'Bullish', 'Bearish', 'Neutral'
 
 # --- THE WEEKLY DEBRIEF ENDPOINTS ---
+# A fresh macro scenario is generated by the AI once per ISO week and cached in
+# Firestore (same pattern as the AI calendar). Community analyses live inside that
+# week's document, so the feed resets every week instead of accumulating forever.
+
+DEFAULT_DEBRIEF = {
+    "title": "The Global Rate Cut Dilemma",
+    "description": "Global central banks are signaling potential rate cuts, yet domestic inflation remains sticky in certain sectors. Given this macroeconomic divergence, how do you expect the Nifty Bank index to perform over the next two weeks? Support your stance with technical or fundamental logic."
+}
+
+def current_week_id() -> str:
+    """ISO week identifier like '2026-W25' — the key for the active debrief."""
+    iso = date.today().isocalendar()
+    return f"{iso[0]}-W{iso[1]:02d}"
+
+def get_week_doc():
+    """Firestore doc ref for the current week's debrief (None if db is down)."""
+    return db.collection('debriefs').document(current_week_id()) if db else None
+
+def generate_weekly_scenario() -> dict:
+    """Ask the AI for a fresh, topical macro scenario. Falls back to a default."""
+    try:
+        prompt = f"""
+        You are a market-strategy editor for an Indian retail-trading community.
+        Generate ONE thought-provoking macro/market debate topic for the week of {current_week_id()} (today is {date.today()}).
+        Reference a current, realistic theme (rates, inflation, sector rotation, global cues, commodities, currency, earnings) relevant to Indian markets.
+        Return ONLY a raw JSON object: {{"title": "<short headline>", "description": "<2-3 sentence prompt asking the trader to take a stance and justify it with technical or fundamental logic>"}}
+        """
+        text = call_openrouter(prompt).strip().replace('```json', '').replace('```', '')
+        obj = json.loads(text)
+        if isinstance(obj, dict) and obj.get("title") and obj.get("description"):
+            return {"title": str(obj["title"]), "description": str(obj["description"])}
+        raise ValueError("AI returned an unexpected scenario shape.")
+    except Exception as e:
+        logger.warning(f"Weekly scenario generation failed, using default. Error: {e}")
+        return DEFAULT_DEBRIEF
+
 @app.get("/api/debrief/current")
 async def get_current_debrief():
-    # For this version, we serve a highly relevant static scenario.
-    # In Phase 2, you can hook this up to your AI to generate a new one every Monday!
-    return {
-        "id": "current_week_scenario",
-        "title": "The Global Rate Cut Dilemma",
-        "description": "Global central banks are signaling potential rate cuts, yet domestic inflation remains sticky in certain sectors. Given this macroeconomic divergence, how do you expect the Nifty Bank index to perform over the next two weeks? Support your stance with technical or fundamental logic.",
-        "date": str(date.today())
-    }
+    week_id = current_week_id()
+    if not db:
+        s = DEFAULT_DEBRIEF
+        return {"id": week_id, "title": s["title"], "description": s["description"], "date": str(date.today())}
+    try:
+        ref = get_week_doc()
+        doc = ref.get()
+        if doc.exists and doc.to_dict().get("title"):
+            data = doc.to_dict()
+            return {"id": week_id, "title": data["title"], "description": data["description"], "date": str(date.today())}
+        # Cache miss → generate this week's scenario once and persist it.
+        scenario = generate_weekly_scenario()
+        ref.set({"title": scenario["title"], "description": scenario["description"],
+                 "week_id": week_id, "created": str(date.today())}, merge=True)
+    except Exception as e:
+        logger.error(f"Debrief current failed: {e}", exc_info=True)
+        scenario = DEFAULT_DEBRIEF
+    return {"id": week_id, "title": scenario["title"], "description": scenario["description"], "date": str(date.today())}
 
 @app.post("/api/debrief/submit")
 async def submit_debrief(submission: DebriefSubmission):
     if not db: raise HTTPException(500, "Firestore not initialized.")
     try:
-        doc_ref = db.collection('debriefs').document('current_week_scenario').collection('analyses').add({
+        # Ensure the week document exists so analyses are attached to a real scenario.
+        await get_current_debrief()
+        doc_ref = get_week_doc().collection('analyses').add({
             'userId': submission.userId,
             'displayName': submission.displayName,
             'picture': submission.picture,
@@ -610,8 +895,8 @@ async def submit_debrief(submission: DebriefSubmission):
 async def get_debrief_analyses():
     if not db: raise HTTPException(500, "Firestore not initialized.")
     try:
-        # Fetch all analyses and order them by highest votes first
-        docs = db.collection('debriefs').document('current_week_scenario').collection('analyses').order_by('votes', direction=firestore.Query.DESCENDING).stream()
+        # This week's analyses, ordered by highest votes first.
+        docs = get_week_doc().collection('analyses').order_by('votes', direction=firestore.Query.DESCENDING).stream()
         return [{'id': doc.id, **doc.to_dict()} for doc in docs]
     except Exception as e:
         logger.error(f"Debrief fetch failed: {e}", exc_info=True)
@@ -621,7 +906,7 @@ async def get_debrief_analyses():
 async def vote_debrief(analysis_id: str):
     if not db: raise HTTPException(500, "Firestore not initialized.")
     try:
-        ref = db.collection('debriefs').document('current_week_scenario').collection('analyses').document(analysis_id)
+        ref = get_week_doc().collection('analyses').document(analysis_id)
         ref.update({'votes': firestore.Increment(1)})
         return {"status": "success"}
     except Exception as e:
