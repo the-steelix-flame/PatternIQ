@@ -1,0 +1,43 @@
+name: Keep PatternIQ backend awake
+
+# Free Hugging Face Spaces sleep after a stretch of inactivity. This pings the
+# Space's public health endpoint on a schedule so it stays warm (and wakes it if
+# it has already slept — an external request triggers a cold start back to running).
+#
+# Note: GitHub disables scheduled workflows after ~60 days with no repository
+# activity; just push any commit (or hit "Run workflow") to re-enable it.
+
+on:
+  schedule:
+    # HF free Spaces sleep only after 48h of inactivity, so this has an enormous margin.
+    # Ping every ~2h at an offset minute (:37, not :00) to dodge GitHub's top-of-hour
+    # high-load window where scheduled runs are most often delayed or dropped.
+    - cron: "37 */2 * * *"
+  workflow_dispatch: {}        # allow manual runs from the Actions tab
+
+concurrency:
+  group: keep-alive
+  cancel-in-progress: true     # don't let slow runs pile up
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping the Hugging Face Space
+        run: |
+          URL="https://kumar-akash-patterniq-backend.hf.space/"
+          for i in 1 2 3 4 5; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 "$URL" || echo 000)
+            echo "Attempt $i -> HTTP $code"
+            if [ "$code" = "200" ]; then
+              echo "Space is awake."
+              exit 0
+            fi
+            sleep 30   # a slept Space may return 503 while it cold-starts
+          done
+          echo "::warning::Space did not return 200 after 5 attempts (it may still be cold-starting)."
+          exit 0       # never fail the job — this is best-effort, no failure emails

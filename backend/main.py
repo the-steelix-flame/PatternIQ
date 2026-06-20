@@ -1,6 +1,8 @@
 import os
 import math
+import time
 import hashlib
+import threading
 from urllib.parse import quote
 import yfinance as yf
 import pandas as pd
@@ -69,6 +71,32 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- Keep-alive self-ping (best-effort supplement) ---
+# PRIMARY keep-awake is the EXTERNAL GitHub Actions pinger (.github/workflows/keep-alive.yml):
+# Hugging Face only resets a free Space's 48h inactivity timer for requests originating
+# OUTSIDE the Space, and only an external request can wake an already-slept Space. This
+# in-container self-ping is a harmless extra that hits the Space's own public URL while it
+# is running. It runs ONLY on Hugging Face (where SPACE_HOST is injected), never in local dev.
+def _self_ping_loop():
+    host = os.getenv("SPACE_HOST")
+    if not host:
+        return
+    url = f"https://{host}/"
+    interval = max(60, int(os.getenv("KEEPALIVE_INTERVAL", "1800")))  # default 30 min
+    while True:
+        time.sleep(interval)
+        try:
+            requests.get(url, timeout=20)
+            logger.info("Self keep-alive ping ok.")
+        except Exception as e:
+            logger.warning(f"Self keep-alive ping failed: {e}")
+
+@app.on_event("startup")
+def _start_self_ping():
+    if os.getenv("SPACE_HOST"):
+        threading.Thread(target=_self_ping_loop, daemon=True, name="keepalive").start()
+        logger.info("Self keep-alive thread started (best-effort; external pinger is primary).")
 
 # --- Market Index Constituents (NSE Tickers) ---
 MARKET_INDICES = {
