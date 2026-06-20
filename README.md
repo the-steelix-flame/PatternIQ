@@ -1,10 +1,10 @@
 # 📈 PatternIQ | AI-Native Trading Intelligence Platform
 
-[![Python](https://img.shields.io/badge/Python-3.11-blue?style=for-the-badge&logo=python)](https://www.python.org/) [![React](https://img.shields.io/badge/React-18-blue?style=for-the-badge&logo=react)](https://reactjs.org/) [![FastAPI](https://img.shields.io/badge/FastAPI-0.100-blue?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/) [![Firebase](https://img.shields.io/badge/Firebase-10.0-blue?style=for-the-badge&logo=firebase)](https://firebase.google.com/)
+[![Python](https://img.shields.io/badge/Python-3.12-blue?style=for-the-badge&logo=python)](https://www.python.org/) [![React](https://img.shields.io/badge/React-18-blue?style=for-the-badge&logo=react)](https://reactjs.org/) [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-blue?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/) [![Firebase](https://img.shields.io/badge/Firebase-10.0-blue?style=for-the-badge&logo=firebase)](https://firebase.google.com/)
 
 **PatternIQ is a full-stack, AI-powered web platform built for the SEBI Securities Market Hackathon to enhance retail investor education and engagement.**
 
-It allows users to backtest complex trading strategies using plain English, compete in a gamified learning community, and receive real-time market insights, transforming trading from a game of chance into a skill-based discipline.
+It lets users backtest trading strategies in plain English, track a live portfolio, scan the market for anomalies, compete in a gamified learning arena, and debate weekly market scenarios with a community — turning trading from a game of chance into a skill-based discipline.
 
 ![PatternIQ Dashboard](./assets/dashboard.png)
 
@@ -19,7 +19,9 @@ It allows users to backtest complex trading strategies using plain English, comp
    - [Prerequisites](#prerequisites)
    - [Backend Setup](#backend-setup)
    - [Frontend Setup](#frontend-setup)
-6. [Future Roadmap](#future-roadmap)
+6. [Deployment & Keep-Alive](#deployment--keep-alive)
+7. [Developer Tools](#developer-tools)
+8. [Future Roadmap](#future-roadmap)
 
 ---
 
@@ -33,48 +35,68 @@ PatternIQ solves this by providing a suite of AI-native tools in a single, intui
 
 ## Key Features
 
+🧠 **The AI Backtesting Engine**
+- **True no-code:** describe strategies in plain English (e.g., *"Buy on a resistance breakout if MACD is positive"*), or upload your own Python script.
+- **Three-stage AI workflow:** the AI first parses your intent, then generates the analysis code, then writes a detailed performance review.
+- **Secure execution:** AI- or user-supplied strategy code runs inside a hardened sandbox — an AST allow-list with no filesystem, network, import, or secret access, executed in an isolated subprocess with a hard timeout (never a raw `exec`).
+- **Detailed results:** interactive equity & drawdown charts, key metrics (win rate, profit factor, max drawdown), a downloadable `.py`, and an AI-written report with actionable insights.
+
+💼 **Portfolio & AI Risk Officer**
+- Add holdings **manually**, or **connect your Zerodha (Kite Connect)** account to import them automatically.
+- **Live prices, P&L, and sector allocation** via yfinance, plus a **computed risk score** (sector concentration + single-position weight + weighted volatility).
+- An **AI Risk Officer** audits your exposure for over-concentration and correlation risk.
+
+🔭 **The Anomaly Scanner**
+- Scans NSE indices for **volume spikes, price breakouts, RSI extremes, and MACD crossovers**, with live alerts streamed in real time from Firestore.
+
 🏆 **The Arena: A Gamified Learning Hub**
-- **Personalized Daily Quizzes:** A new, AI-generated quiz is created every day based on recent market news. The difficulty (Levels 1-20) adapts to the user's skill, which is based on their Reputation Points (RP).
-- **Live Leaderboard & Profiles:** Users compete for RP and can view each other's profiles and ranks, fostering a fun and competitive learning environment.
+- **AI-generated daily quizzes** (Levels 1–20) tuned to your skill, a **live leaderboard**, public profiles, and per-user history.
 
-🧠 **The Ultimate AI Backtesting Engine**
-- **True No-Code:** Users describe complex strategies in plain English (e.g., "Buy on a resistance breakout if MACD is positive").
-- **Three-Stage AI Workflow:** A unique system uses AI to first parse the user's intent, then dynamically generate the Python code for analysis, and finally provide a detailed performance review.
-- **Detailed Analysis:** Results include interactive equity/drawdown charts, key metrics like Profit Factor, and a full AI-written report with actionable insights.
-
-![PatternIQ Dashboard](./assets/anomaly.png)
+💬 **Community Hub & The Weekly Debrief**
+- Share strategies and discuss the market with **tag search and up/down voting**.
+- A **fresh AI-generated macro scenario every week** — post your stance (Bullish/Bearish/Neutral) and vote on the community's best analyses.
 
 📅 **The Interactive Trader's Calendar**
-- **AI-Powered Events:** The calendar is automatically populated with key market events (Domestic, Global, Corporate) generated by AI daily.
-- **Personal & Secure Notes:** Users can add, edit, and delete their own private notes and trade ideas on any date. This data is stored securely in their personal user document in Firebase.
+- **AI-powered events:** key market events (Domestic, Global, Corporate) generated daily and cached.
+- **Personal & secure notes:** add, edit, and delete your own private trade ideas, stored in your Firebase user document.
+
+🔐 **Accounts**
+- **Google OAuth** and **Firebase email/password** sign-in, with email verification and **password reset (forgot password)**.
+
+![PatternIQ Anomaly Scanner](./assets/anomaly.png)
 
 ---
 
 ## Architecture Overview
 
-1.  **Frontend (React):** The user interacts with the React single-page application.
-2.  **Backend (FastAPI):** The Python backend serves as the brain, handling all business logic and orchestrating calls to the Google Gemini API.
-3.  **AI (Google Gemini):** Used for specialized tasks: parsing natural language, generating Python code, creating quiz questions, and writing analytical reports.
-4.  **Database (Firebase Firestore):** A real-time NoSQL database stores all user profiles, private calendar notes, and cached AI-generated content.
+1. **Frontend (React + Vite):** a single-page app, deployed on **Vercel**.
+2. **Backend (FastAPI):** the brain — business logic and orchestration — deployed on **Hugging Face Spaces** (Docker).
+3. **AI (OpenRouter → Gemini 2.5 Flash Lite):** natural-language parsing, strategy-code generation, quiz/calendar/debrief generation, and analytical reports.
+4. **Market Data (yfinance):** historical and live prices for backtests, the scanner, and the portfolio.
+5. **Broker (Zerodha Kite Connect):** optional OAuth import of real holdings (env-gated).
+6. **Database & Auth (Firebase):** Firestore stores users, holdings, posts, calendar notes, and cached AI content; Firebase Auth handles sign-in.
+7. **Strategy Sandbox:** validates and isolates untrusted strategy code before it ever runs.
 
 ---
 
 ## Technology Stack
 
-- **AI/ML:** Python, Google Gemini API, Pandas, NumPy, Pandas-TA.
+- **AI / Data:** Python, OpenRouter (Gemini 2.5 Flash Lite), Pandas, NumPy, pandas-ta, yfinance.
 - **Backend:** FastAPI, Uvicorn, Pydantic.
-- **Frontend:** React, JavaScript, Material-UI (MUI), MUI X Charts, Axios, Vite.
-- **Database & Auth:** Google Firebase (Firestore), Google OAuth 2.0.
+- **Frontend:** React 18, Vite, Material-UI (MUI) + MUI X Charts, Recharts, Axios.
+- **Database & Auth:** Firebase Firestore, Firebase Auth, Google OAuth 2.0.
+- **Broker (optional):** Zerodha Kite Connect.
+- **Deployment:** Hugging Face Spaces (backend, Docker) · Vercel (frontend).
 
 ---
 
 ## Getting Started
 
-To get a local copy up and running, follow these simple steps.
+To get a local copy up and running, follow these steps.
 
 ### Prerequisites
 
-- Python 3.10+
+- Python 3.10+ (the Space runs 3.12)
 - Node.js 18.x or higher
 - `git` installed on your machine
 
@@ -88,61 +110,85 @@ The backend server is the engine of the application. It **must be running** for 
     ```
 2.  **Create and activate a virtual environment**
     ```sh
-    # Create the environment (only needs to be done once)
     python -m venv venv
-    ```
-    ```sh
-    # Activate the environment (must be done every time you open a new terminal)
-    # On Windows:
+    # Windows:
     .\venv\Scripts\activate
-    # On Mac/Linux:
+    # Mac/Linux:
     source venv/bin/activate
     ```
 3.  **Install Python packages**
     ```sh
     pip install -r requirements.txt
     ```
-4.  **Add Your Secret Keys (CRITICAL)**
-    - Create a file named `.env` in the `backend` folder and add your Gemini API key:
-      ```
-      GEMINI_API_KEY="your_gemini_api_key_here"
-      ```
-    - Download your `serviceAccountKey.json` from your Firebase project settings and place it in the `backend` folder.
+4.  **Add your secret keys (CRITICAL)** — create a file named `.env` in the `backend` folder:
+    ```
+    OPENROUTER_API_KEY="your_openrouter_api_key_here"
 
-5.  **Run the Backend Server**
+    # Optional — only needed to enable "Connect Zerodha" in the Portfolio:
+    KITE_API_KEY="your_kite_connect_api_key"
+    KITE_API_SECRET="your_kite_connect_api_secret"
+    ```
+    For Firebase, either set `FIREBASE_SERVICE_ACCOUNT` (your service-account JSON as a single-line string — used in production) **or** download `serviceAccountKey.json` from Firebase project settings into the `backend` folder (for local development).
+
+5.  **Run the backend server**
     ```sh
     uvicorn main:app --reload
     ```
-    The server will be running at `http://127.0.0.1:8000`. **You must leave this terminal window open and running in the background.**
+    The server runs at `http://127.0.0.1:8000`. **Leave this terminal open.**
 
 ### Frontend Setup
 
-The frontend is the user interface you see in the browser. It needs its own terminal window.
+The frontend is the user interface. It needs its own terminal window.
 
-1.  **Open a new terminal** and navigate to the frontend directory
+1.  **Open a new terminal** and go to the frontend directory
     ```sh
-    cd frontend 
+    cd frontend
     ```
 2.  **Install NPM packages**
     ```sh
     npm install
     ```
-3.  **Add Your Secret Keys (CRITICAL)**
-    - Open `frontend/src/App.jsx` and replace the `GOOGLE_CLIENT_ID` placeholder.
-    - Open `frontend/src/firebase.js` and replace the `firebaseConfig` placeholder.
+3.  **Configure the app**
+    - Create/edit `frontend/.env` to point at your backend:
+      ```
+      VITE_API_URL=http://127.0.0.1:8000
+      ```
+    - Set `GOOGLE_CLIENT_ID` in `src/App.jsx` and `firebaseConfig` in `src/firebase.js`.
 
-4.  **Run the Frontend App**
+4.  **Run the frontend app**
     ```sh
     npm run dev
     ```
-    The application will be available at `http://localhost:5173`.
+    The app is available at `http://localhost:5173`.
+
+---
+
+## Deployment & Keep-Alive
+
+- **Frontend → Vercel.** Auto-deploys on push to `main`; build command is `vite build` (root directory: `frontend`).
+- **Backend → Hugging Face Spaces (Docker).** The Space mirrors the `backend/` folder at its root; deploy with:
+  ```sh
+  git subtree push --prefix=backend hf main
+  ```
+  Set `OPENROUTER_API_KEY`, `FIREBASE_SERVICE_ACCOUNT` (and optional `KITE_API_KEY` / `KITE_API_SECRET`) as **Space secrets** in the HF settings.
+- **Keep-alive.** Free HF Spaces sleep after 48h of inactivity, and only *external* requests reset that timer. [`.github/workflows/keep-alive.yml`](.github/workflows/keep-alive.yml) pings the Space every ~2 hours (the reliable method); the backend also runs a best-effort in-app self-ping while it's awake. For a hard guarantee, add an external uptime monitor (UptimeRobot / cron-job.org) on the same URL, or upgrade the Space to paid hardware.
+
+---
+
+## Developer Tools
+
+- **Code Navigator** — open [`CODE_NAVIGATOR.html`](CODE_NAVIGATOR.html) for a single, searchable map of every API endpoint, React component, and function (each with a one-line description and clickable file:line), plus a **Feature Map** and a **connection matrix** showing how the features wire together. Regenerate it after code changes with:
+  ```sh
+  python tools/generate_navigator.py
+  ```
+- **Audit report** — [`PROJECT_AUDIT_REPORT.md`](PROJECT_AUDIT_REPORT.md) is a candid review of what's real vs. demo data and a prioritized enhancement roadmap.
 
 ---
 
 ## Future Roadmap
 
-- **Phase 1:** Implement detailed trade logs, data export, and a "My Strategies" hub.
-- **Phase 2:** Launch the full "Weekly Debrief" community feature.
-- **Phase 3:** Build the live, AI-summarized news feed.
-- **Phase 4:** Create the verified SEBI Registered Analyst Hub.
-- **Phase 5:** Integrate Blockchain for verifiable reputation and DPI (Aadhaar/UPI) for secure KYC and payments.
+- **Per-endpoint authentication** — verify Firebase ID tokens server-side so a user can only read/write their own data.
+- **Backtest realism** — slippage, brokerage/STT charges, position sizing, short selling, and Sharpe/Sortino metrics.
+- **Live, AI-summarized news feed.**
+- **Verified SEBI Registered Analyst Hub.**
+- **Blockchain reputation + DPI (Aadhaar/UPI)** for verifiable reputation, secure KYC, and payments.
